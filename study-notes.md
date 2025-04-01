@@ -131,3 +131,22 @@ RUN apt-get update && apt-get upgrade	# optional
 ENTRYPOINT ["bash", "setup.sh"]
 
 ```
+### 提醒
+可以在项目的根目录下创建一个 .dockerignore 文件夹，表示可排除的文件，类似 .gitignore。
+
+也可将 ENTRYPOINT 换做 CMD ，都是容器启动后自动执行指令，简单区别就是 ENTRYPOINT 可以在本地启动容器时加额外的shell参数。
+另外，一个 Dockerfile 可以包含多个RUN命令，但是只能有一个CMD 或者 ENTRYPOINT 命令。
+
+```shell
+CMD bash setup.sh
+
+```
+
+其中用ENTRYPOINT 来构造镜像，但是启动它的容器时候想要用带有参数（如 <command> <arg1> <arg2>）的指令，那怎么办呢？
+
+参考此博文 https://blog.csdn.net/chenxing109/article/details/85319489 就可以知道，可以利用 --entrypoint 参数来覆盖并运行容器：
+
+```shell
+docker run --entrypoint <command> <image>:<tag> <arg1> <arg2>
+```
+

@@ -150,3 +150,25 @@ CMD bash setup.sh
 docker run --entrypoint <command> <image>:<tag> <arg1> <arg2>
 ```
 
+另外，DEBIAN_FRONTEND 这个环境变量很有用，可以告诉操作系统应该从哪里获得用户输入。常用的设置是 noninteractive，这样你就可以直接运行命令，
+而无需向用户请求输入（即所有操作都是非交互式的）。这在运行 apt-get 命令的时候格外有用，因为它会不停的提示用户进行到了哪步并且需要不断确认。
+非交互模式会选择默认的选项并以最快的速度完成构建。请确保只在 Dockerfile 中调用的 RUN 命令中设置 了该选项，而不是使用 ENV 命令进行全局的设置。
+因为 ENV 命令在整个容器运行过程中都会生效, 所 以当你通过 BASH 和容器进行交互时，如果进行了全局设置那就会出问题。
+
+
+要注意的是，正确的做法：只为这个命令设置 ENV 变量：
+
+```shell
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y python3
+```
+再比如：
+
+```shell
+FROM ubuntu:trusty
+RUN \
+DEBIAN_FRONTEND=noninteractive apt update && \
+DEBIAN_FRONTEND=noninteractive apt clean
+```
+
+## 8. 创建image
+

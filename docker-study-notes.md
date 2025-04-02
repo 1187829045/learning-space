@@ -172,3 +172,70 @@ DEBIAN_FRONTEND=noninteractive apt clean
 
 ## 8. 创建image
 
+有了 Dockerfile 文件以后，就可以使用docker image build命令创建 image 文件了
+
+```shell
+$ docker image build -t my-demo .
+# 或者
+$ docker image build -t my-demo:0.0.1 .
+```
+上面代码中，-t参数用来指定 image 文件的名字，后面还可以用冒号指定标签。如果不指定，默认的标签就是latest。最后的那个点表示 Dockerfile 文件所在的路径，上例是当前路径，所以是一个点。
+
+如果运行成功，就可以看到新生成的 image 文件my-demo了。
+
+```shell
+$ docker image ls -a
+```
+
+### 注意：
+
+当母 image 是有 ENTRYPOINT 时，在其基础上创建的子 image 会继承其 ENTRYPOINT，并且不会被子 image 的容器在 docker run 时提供的参数覆盖。
+只有在子 image 的 Dockerfile 中指定 ENTRYPOINT再 build 后才可以覆盖。（子 image 的ENTRYPOINT 为空也可）REF REF
+
+基于容器来创建 image：REF
+
+先运行一个容器，并在运行容器的基础上进行修改（不要使用 docker run --rm 参数会自动删除容器，应使用-it 参数来可交互 ），如：
+
+```shell
+$ sudo docker container run -it <image_name> /bin/bash
+然后将正在运行的容器导出为 image。
+
+$ docker commit -m "Description" -a "users <users@email.com>" <ID> <your_repo:tags>
+```
+其中：
+
+```shell
+-m 指定提交的说明信息
+-a 指定更新的作者和邮箱
+<ID> 想要保存为 image 的容器 ID
+<your_repo:tags> 欲新建镜像的 repository:tags
+```
+
+## 9.删除 image
+```shell
+
+$ docker rmi [image ID]
+若生成 image 有误等情况，导致出现难以正常删除的 image，可执行下面的代码即可！
+
+$ docker rmi $(docker images -f "dangling=true" -q)
+```
+
+## 10.生成容器
+**_docker container run**_ 命令会从 image 文件生成容器。
+
+比如下面的例子：
+
+```shell
+$ docker container run -p 8000:3000 -it my-demo /bin/bash
+# 或者
+$ docker container run -p 8000:3000 -it my-demo:0.0.1 /bin/bash
+```
+上面命令的各个参数含义如下：
+
+```shell
+-p参数：容器的 3000 端口映射到本机的 8000 端口
+-it参数：容器的 Shell 映射到当前的 Shell，然后你在本机窗口输入的命令，就会传入容器
+my-demo:0.0.1：image 文件的名字（如果有标签，还需要提供标签，默认是 latest 标签）
+/bin/bash：容器启动以后，内部第一个执行的命令。这里是启动 Bash，保证用户可以使用 Shell
+```
+

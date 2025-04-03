@@ -1,4 +1,9 @@
-# Docker Study
+###  目录
+1. Docker - 极简入门
+2. Docker — 从入门到实践
+
+
+# Docker - 极简入门
 
 ## 参考资料
 
@@ -238,4 +243,76 @@ $ docker container run -p 8000:3000 -it my-demo:0.0.1 /bin/bash
 my-demo:0.0.1：image 文件的名字（如果有标签，还需要提供标签，默认是 latest 标签）
 /bin/bash：容器启动以后，内部第一个执行的命令。这里是启动 Bash，保证用户可以使用 Shell
 ```
+
+## 10.终止容器
+若在容器的命令行中，按下 Ctrl + c 停止进程，然后按下 Ctrl + d （或者输入 exit）退出容器。
+
+此外，不管是容器中，还是本机的终端里，也都可以用docker container kill终止容器运行。
+
+```shell
+# 在本机的另一个终端窗口，查出容器的 ID
+$ docker container ls
+
+# 停止指定的容器运行
+$ docker container kill [containerID]
+```
+容器停止运行之后，并不会消失，用下面的命令删除容器文件。
+
+```shell
+# 查出容器的 ID
+$ docker container ls --all
+
+# 删除指定的容器文件
+$ docker container rm [containerID] # containerID 可以输入前几个关键词即可
+```
+
+或者对于指定过 name 的容器进程，可如下例子来关闭 stop 并删除 rm 容器：
+
+```shell
+$ docker run -p 6379:6379 --name gredis -d redis
+# ... runing ...
+$ docker stop gredis
+$ docker rm gredis
+```
+也可以使用docker container run命令的--rm参数，在容器终止运行后自动删除容器文件，如下面的例子：
+
+```shell
+$ docker container run --rm -p 8000:3000 -it koa-demo /bin/bash
+```
+
+
+## 11.发布和保存 image
+容器运行成功后，就确认了 image 文件的有效性。这时，我们就可以考虑把 image 文件分享到网上，让其他人使用。
+
+首先，去 hub.docker.com 或 cloud.docker.com 注册一个账户。然后，用下面的命令登录。
+
+```shell  
+$ docker login
+```
+接着，为本地的 image 标注用户名和版本。
+
+```shell
+$ docker image tag [imageName] [username]/[repository]:[tag]
+# 实例
+$ docker image tag my-demos:0.0.1 iphysresearch/my-demos:0.0.1
+```
+也可以不标注用户名，重新构建一下 image 文件。
+
+```shell
+$ docker image build -t [username]/[repository]:[tag] .
+最后，发布 image 文件
+
+$ docker image push [username]/[repository]:[tag]
+发布成功以后，登录 hub.docker.com,就可以看到已经发布的 image 文件
+```
+
+# Docker — 从入门到实践
+
+**_参考连接_**:https://yeasy.gitbook.io/docker_practice/introduction/what
+
+## 什么是Docker 
+
+Docker 使用 Google 公司推出的 Go 语言 进行开发实现，基于 Linux 内核的 cgroup，namespace，以及 OverlayFS 类的 Union FS 等技术，对进程进行封装隔离，
+属于 操作系统层面的虚拟化技术。由于隔离的进程独立于宿主和其它的隔离的进程，因此也称其为容器。最初实现是基于 LXC，从 0.7 版本以后开始去除 LXC，转而使用自行开
+发的 libcontainer，从 1.11 版本开始，则进一步演进为使用 runC 和 containerd。
 

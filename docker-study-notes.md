@@ -1,4 +1,9 @@
-# Docker Study - 极简入门
+###  目录
+1. Docker - 极简入门
+2. Docker — 从入门到实践
+
+
+# Docker - 极简入门
 
 ## 参考资料
 
@@ -300,4 +305,14 @@ $ docker image build -t [username]/[repository]:[tag] .
 $ docker image push [username]/[repository]:[tag]
 发布成功以后，登录 hub.docker.com,就可以看到已经发布的 image 文件
 ```
+
+# Docker — 从入门到实践
+
+**_参考连接_**:https://yeasy.gitbook.io/docker_practice/introduction/what
+
+## 什么是Docker 
+
+Docker 使用 Google 公司推出的 Go 语言 进行开发实现，基于 Linux 内核的 cgroup，namespace，以及 OverlayFS 类的 Union FS 等技术，对进程进行封装隔离，
+属于 操作系统层面的虚拟化技术。由于隔离的进程独立于宿主和其它的隔离的进程，因此也称其为容器。最初实现是基于 LXC，从 0.7 版本以后开始去除 LXC，转而使用自行开
+发的 libcontainer，从 1.11 版本开始，则进一步演进为使用 runC 和 containerd。
 

@@ -316,3 +316,21 @@ Docker 使用 Google 公司推出的 Go 语言 进行开发实现，基于 Linux
 属于 操作系统层面的虚拟化技术。由于隔离的进程独立于宿主和其它的隔离的进程，因此也称其为容器。最初实现是基于 LXC，从 0.7 版本以后开始去除 LXC，转而使用自行开
 发的 libcontainer，从 1.11 版本开始，则进一步演进为使用 runC 和 containerd。
 
+### 对上述内容的名词进行解释
+1.  cgroups: 功能：Linux 内核提供的 资源隔离与限制 机制。 核心作用：资源分配：限制 CPU、内存、磁盘 I/O、网络带宽等资源使用。优先级控制：为不同进程组分配资源权重。
+统计监控：记录资源使用量（如内存占用量）。Docker 中的应用：限制单个容器的资源使用（如 docker run --memory=1g）。避免容器耗尽宿主机的资源。
+2. Namespaces: 功能：Linux 内核提供的 进程隔离 机制，为进程创建独立的系统视图。
+3. Union File System: 一种分层叠加的文件系统，允许多个文件系统层透明叠加。**_写时复制（Copy-on-Write）_**：修改文件时复制到可写层，原始层保持只读
+4. OverlayFS：Linux 内核支持的 Union FS 实现，Docker 默认使用的存储驱动。**_分层结构：_**镜像层（只读）：基础镜像和增量修改层。容器层（可写）：容器运行时产生的修改。
+**_优势：_**节省存储空间（共享基础镜像层）。加速镜像构建和容器启动。
+5. LXC（Linux Containers）:早期的 操作系统级虚拟化技术，基于 cgroups 和 namespaces,主要是在单台宿主机上运行多个隔离的 Linux 系统（容器）
+6. libcontainer:Docker 公司自研的 容器运行时库（Go 语言实现）。：Docker 0.7 版本开始取代 LXC。特点：直接操作 Linux 内核的 cgroups 和 namespaces，不依赖 LXC。
+更轻量，更适合 Docker 的架构,标志着 Docker 脱离对 LXC 的依赖，形成独立技术栈。
+7. runC 与 containerd runC：遵循 OCI（Open Container Initiative） 标准的轻量级容器运行时工具。直接与内核交互，创建和运行容器（替代 libcontainer）。特点：标准化、跨平台（支持 Linux/Windows）。
+ontainerd：负责 容器生命周期管理 的高层守护进程。镜像管理、容器启停、存储与网络配置。
+
+
+
+Docker 在容器的基础上，进行了进一步的封装，从文件系统、网络互联到进程隔离等等，极大的简化了容器的创建和维护。使得 Docker 技术比虚拟机技术更为轻便、快捷。
+
+p2

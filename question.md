@@ -170,151 +170,351 @@ reflect.Value：封装变量的值，支持修改值、调用方法等操作。
 9. 四次挥手释放连接
 
 ## 19.内存泄漏原理,怎么排查以及怎么解决
+内存泄漏（Memory Leak）指程序未能释放不再使用的内存，导致内存占用持续增长，最终可能引发 OOM（Out of Memory） 或性能下降。在 Golang 中，虽然具备自动垃圾回收（GC），但编码不当仍会导致泄漏。
+
+####  核心原因
+
+1. 引用未释放：对象被全局变量、长生命周期结构（如缓存）或未关闭的 Goroutine 引用，GC 无法回收。
+2. 资源未关闭：文件句柄、网络连接、数据库连接、time.Ticker 未释放。
+#### 排查方法
+
+1. 监控工具,runtime 包：监控内存和 Goroutine 数量。
+```shell
+  // 实时打印内存和 Goroutine 状态
+  go func() {
+      for {
+          var m runtime.MemStats
+          runtime.ReadMemStats(&m)
+          fmt.Printf("Alloc = %v MiB, Goroutines = %d\n", m.Alloc/1024/1024, runtime.NumGoroutine())
+          time.Sleep(5 * time.Second)
+      }
+  }()
+```
+2. pprof 分析
+   启用 pprof：
+```shell
+   import _ "net/http/pprof"
+   go func() { http.ListenAndServe("0.0.0.0:6060", nil) }() 
+```
+
+生成报告：
+```shell
+ 查看堆内存
+go tool pprof -http=:8080 http://localhost:6060/debug/pprof/heap
+查看 Goroutine 栈
+go tool pprof http://localhost:6060/debug/pprof/goroutine
+```
+
+## 20.go的context在高并发下有什么问题
+在 Go 的高并发场景中，context 是管理协程生命周期和数据传递的核心工具，但若使用不当会引发 资源泄漏、性能瓶颈、数据竞争 等问题
+
+1. Context 未正确取消导致 Goroutine 泄漏
+```shell
+   问题：父 Context 取消后，子 Goroutine 未监听 ctx.Done()，导致无法退出。
+   go func() {
+      // 未监听 ctx.Done()，即使父 Context 取消也无法退出
+      processTask()
+  }()
+   影响：高并发下积累大量僵尸 Goroutine，内存占用飙升，最终 OOM
+   案例：HTTP 服务未绑定请求 Context，客户端断开后处理协程仍运行
+```
+
+2. 超时控制失效引发级联故障
+```shell
+   问题：未设置超时或超时时间不合理，导致请求堆积。
+   // 未设置超时,阻塞操作可能无限等待
+   ctx := context.Background()
+   result, err := db.Query(ctx, "SELECT * FROM large_table")
+   影响：数据库连接池耗尽，服务雪崩。 
+   案例：微服务链路中某环节超时未传递，下游服务持续等待。
+```
 
 
-## go的context在高并发下有什么问题
+3. Context 值传递引发竞争或性能问题
+```shell
+   问题：滥用 context.WithValue 存储大对象或频繁访问数据。
+   // 存储大对象，增加内存压力
+   ctx := context.WithValue(parentCtx, "data", largeData)
+   影响：高并发下内存占用高，频繁读写引发竞争（需配合锁）。 
+```
+
+4. 重复取消或多次调用 CancelFunc
+```shell
+   问题：多次调用 cancel() 导致 Channel 重复关闭，触发 Panic。
+   ctx, cancel := context.WithCancel(context.Background())
+   go func() { cancel() }()
+   go func() { cancel() }() // 可能重复调用 
+```
 
 
-## go的gorm底层是否有线程池，是否有用过
+## 21.go的gorm底层是否有连接池，是否有用过
+有
+
+```shell
+  // 示例：配置连接池
+  db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+  sqlDB, _ := db.DB()
+  sqlDB.SetMaxOpenConns(100)  // 最大连接数
+  sqlDB.SetMaxIdleConns(20)   // 最大空闲连接
+  sqlDB.SetConnMaxLifetime(time.Hour) // 连接最大存活时间
+```
+
+## 22.go的gin框架的特点？还用过什么web框架
+1. 极致性能 路由引擎：
+基于 http router 的 Radix 树算法实现路由匹配，时间复杂度为 O(n)（路径长度），而非传统框架的 O(m)（路由数量），性能接近原生 net/http，基准测试 QPS 高达 40 万+。
+低内存消耗：轻量级设计，内存占用仅为同类框架的 1/3~1/2，适合高并发场景（如 API 网关、微服务）
+
+2. 简洁易用的 API
+链式调用：通过 c.JSON()、c.String() 等封装方法直接处理响应，无需手动序列化或设置 Content-Type。
+参数绑定与验证：支持自动解析请求参数到结构体，并集成数据验证（如字段必填、格式校验）。
+3.  强大的中间件生态,内置中间件：默认集成日志（Logger）、崩溃恢复（Recovery）等常用功能。支持自定义中间件（如 JWT 鉴权、限流），社区提供数百种现成中间件
 
 
-## go的gin框架的特点？还用过什么web框架
+
+## 23.MySQL的事务隔离以及如何实现？
+
+1. 读已提交 (RC): MVCC + 行锁，每次查询生成新 ReadView。
+2. 可重复读 (RR):MVCC + Next-Key 锁，事务开始时生成唯一 ReadView。InnoDB 默认级别，已解决幻读。
+3. 串行化:读写均加锁（读锁共享，写锁排他），完全串行化执行。
+
+## 24.如何实现分布式锁
+分布式锁是协调分布式系统中多个节点对共享资源互斥访问的核心技术，其实现需满足 互斥性、无死锁、容错性、高可用性 等要求
+
+1. 基于数据库实现:悲观锁, 使用 SELECT ... FOR UPDATE 锁定记录，其他事务阻塞等待。优点：实现简单，依赖数据库事务。缺点：性能低（IO开销大），锁表风险高，需手动管理超时;乐观锁
+利用版本号或时间戳实现 CAS,适用场景：低并发、短事务场景（如库存扣减）。
+2. 基于 Redis 实现 : 基础方案（单节点）,使用 SETNX + 过期时间 + 唯一标识（UUID）.
+```shell
+  SET lock_key $uuid NX PX 30000  # 加锁（30秒自动释放）
+  EVAL "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end" 1 lock_key $uuid  # 释放锁 
+```
+3. 基于 ZooKeeper 实现 临时顺序节点 + Watcher 监听
+
+步骤：1.创建临时顺序节点 /locks/lock_00000001。2.检查是否最小节点，若是则获取锁。若非最小，监听前一个节点的删除事件。3.业务完成删除自身节点，触发后续节点获取锁。
+
+优点：强一致性，自动释放（会话断开节点删除）。
+
+缺点：性能低于 Redis，需维护 ZK 集群。
 
 
-## MySQL的事务隔离以及如何实现？
+## 25.线程池底层，什么场景下使用
+线程池通过 复用线程资源、控制并发规模、减少系统开销 提升程序性能
+#### 底层
+1. 线程池管理器（ThreadPoolExecutor）负责线程的创建、销毁和任务调度，通过参数动态控制线程池行为：
+
+corePoolSize：核心线程数（常驻线程，即使空闲也不销毁）。
+
+maximumPoolSize：最大线程数（临时线程，空闲超时后回收）。
+
+workQueue：任务队列（缓冲未处理的任务）。
+
+RejectedExecutionHandler：拒绝策略（队列满时的处理逻辑）。
+
+2. 工作线程（Worker）
+封装 Thread 和 Runnable 任务，循环从队列获取任务执行。
+
+3. 任务队列（BlockingQueue）
+存储待处理任务，常见类型：
+
+无界队列（如 LinkedBlockingQueue）：适合任务量稳定但执行较慢的场景。
+
+有界队列（如 ArrayBlockingQueue）：防止资源耗尽，需配合拒绝策略。
+
+优先级队列（如 PriorityBlockingQueue）：按任务优先级调度。
+
+#### 使用场景
+1. 高并发请求处理
+2. 批量异步任务
 
 
-## 超卖过程中，如何利用redis实现高并发？
+## 26.https的Tls rsa握手过程，存在什么安全隐患，分别怎么解决的
+HTTPS 的 TLS RSA 握手过程虽然通过非对称加密实现了密钥协商
+
+#### TLS RSA 握手流程回顾
+以 TLS 1.2 为例的 RSA 握手关键步骤：
+1. Client Hello：客户端发送支持的加密套件列表和随机数（Client Random）。
+2. Server Hello：服务器选择 RSA 加密套件，返回证书、随机数（Server Random）。
+3. Client Key Exchange：检查证书,客户端生成预主密钥（Pre-Master Secret），用服务器公钥加密后发送。
+4. 生成会话密钥：客户端和服务器根据 Client Random、Server Random、Pre-Master 计算主密钥（Master Secret）和会话密钥
+#### 安全隐患及解决方案
+1. 前向安全性缺失:风险：若服务器私钥泄露，历史通信记录可被解密
+2. 中间人攻击（MITM）风险
 
 
-## 如何实现分布式锁
+## 27.redis zset底层实现的数据结构
+ZSet 有两种不同的实现，分别是 ziplist 和 skiplist
+
+1. ziplist：满足以下两个条件：[value，score]键值对数量少于128个；每个元素的长度小于64字节。
+2. skiplist：不满足以上两个条件时使用skiplist跳表，组合了hash和skiplist
+   ,hash用来存储value到score的映射，在时间复杂度o(1)时间内知道对应value的分数。
+   skiplist按照从小到大的顺序存储分数；每个元素存储的都是<value,score>对。
+
+## 28.说一下MVCC
+主要是依靠这两个东西来实现的:
+1. Read View中四个字段作用;
+2. 聚簇索引记录中两个跟事务有关的隐藏列；
+
+#### Read View有四个重要的字段：
+1. m_ids：指的是在创建ReadView时，当前数据库中「活跃事务」的事务id列表，”活跃事务”指的就是，启动了但还没提交的事务。
+2. min_trx_id：指的是在创建Read View时，当前数据库中「活跃事务」中事务id最小的事务，也就是m_ids 的最小值。
+3. max_trx_id：这个并不是m_ids的最大值，而是创建ReadView时当前数据库中应该给下一个事务的id值，也就是全局事务中最大的事务id值+1;
+4. creator_trx_id：指的是创建该 Read View的事务的事务 id。
+#### 两个隐藏列
+1. trx_id，当一个事务对某条聚簇索引记录进行改动时，就会把该事务的事务id记录在trx_id隐藏列里;
+2. roll_pointer，每次对某条聚簇索引记录进行改动时，都会把旧版本的记录写入到undo日志中，然后这个隐藏列是个指针，指向每一个旧版本记录，于是就可以通过它找到修改前的记录。
+
+如果记录的 trx_id 值小于 Read View 中的 min_trx_id 值,可见
+
+如果记录的 trx_id 值大于等于 Read View 中的 max_trx_id 值,不可见
+
+trx_id 值在 Read View 的 min_trx_id 和 max_trx_id 之间,需要判断 trx_id 是否在 m_ids 列表中,在,不可见,不在,可见
+
+## 29.什么是协程？
 
 
-## 线程池底层，什么场景下使用
+## 30.为什么有了线程之后还要有协程？
 
 
-## https的Tls rsa握手过程，存在什么安全隐患，分别怎么解决的
+## 31.进程间的通信
+
+## 32.共享内存的原理，怎么创建
+
+## 33.如何优雅地结束一个goroutine
+
+## 34.B树和B+树
+
+## 35.浏览器输入 URL 的一个过程
+
+## 36.Golang 的 GMP 调度
 
 
-## redis的数据类型，zset底层实现的数据结构
+## 37.M 系统调用结束以后会怎么样
+
+## 38.说一下 Gin 的拦截器的原理
+
+## 38.说一下 Gin 的路由怎么实现的
+
+## 39.Gin 的路由使用的数据结构（字典树），介绍一下字典树
+
+## 40.Redis 持久化有几种？
+
+## 41.Redis 的主从架构有哪些
+
+## 42.Go map 为什么是无序的
+
+## 43.MySQL 索引分类，索引的优点和缺点
+
+## 44.分库分表
+
+## 45.Cookie 和 Session 的区别和应用，分布式 Session 的实现
+
+## 46.Redis 的雪崩效应 ，是什么，怎么解决
 
 
-## 聚簇索引和非聚簇索引，覆盖索引
-
-## 说一下MVCC
-
-## 什么是协程？
+## 47.map, slice 未初始化，操作会怎么样。
 
 
-## 为什么有了线程之后还要有协程？
+## 48.recover 怎么使用的，defer 相比普通的在函数最后执行操作，其优势是什么
+
+## 49.map 是否并发安全？如何保证并发安全？
+map 并发读写都是不安全的。
+
+## 50.如何控制 GMP 中 M 的数量？
 
 
-## 进程间的通信
+## 51. 如何控制 goroutine 的生命周期
 
-## 共享内存的原理，怎么创建
+## 52.select 如何使用？
 
-## 如何优雅地结束一个goroutine
+## 53.new 和 make 的区别？
 
-## B树和B+树
+## 54.Go string 和 []byte 的区别
 
-## 浏览器输入 URL 的一个过程
+## 55.操作系统中零拷贝
 
-## Golang 的 GMP 调度
+## 56.如何排查慢 SQL
 
-## M 发生系统调用了 G 和 P 会怎么样
+## 57.EXPLAIN 执行计划要关注的字段
 
-## M 系统调用结束以后会怎么样
+## 58.如果设置了索引速度还是很慢怎么办
 
-## 说一下 Gin 的拦截器的原理
+## 59.MySQL 数据量非常大了以后要怎么做
 
-## 说一下 Gin 的路由怎么实现的
+## 60.分库分表有几种思路
 
-## Gin 的路由使用的数据结构（字典树），介绍一下字典树
-
-## Redis 持久化有几种？
-
-## Redis 的主从架构有哪些
-
-## Go map 为什么是无序的
-
-## MySQL 索引分类，索引的优点和缺点
-
-## 分库分表
-
-## Cookie 和 Session 的区别和应用，分布式 Session 的实现
-
-## Redis 的雪崩效应 ，是什么，怎么解决
-
-## slice 和 array 的区别
-
-## map, slice 未初始化，操作会怎么样。发生 panic 应该怎么办
-
-## recover 怎么使用的，defer 相比普通的在函数最后执行操作，其优势是什么
-
-## channel 相关操作
-
-## map 有序无序，为什么？map 是否并发安全？如何保证并发安全？map 并发读写都是不安全的。
-
-如何控制 GMP 中 M 的数量？(???)
-如何控制 goroutine 的生命周期，channel 的作用，context 的作用
-select 如何使用？
-new 和 make 的区别？
-Go string 和 []byte 的区别
-操作系统中零拷贝
-回表是什么
-如何减少回表次数来优化
-如何排查慢 SQL
-如何最直观的查看慢 SQL
-EXPLAIN 执行计划要关注的字段
-如果设置了索引速度还是很慢怎么办
-MySQL 数据量非常大了以后要怎么做
-分库分表有几种思路
-
-使用 gorm 遇到过哪些坑
+## 61.使用 gorm 遇到过哪些坑
 _更新时用结构体更新，不会更新零值，需要用 map 数组
 _time.Time日期格式默认是 ISO 8601 格式，想要更改格式需要自定义时间结构体
 
-为什么 MySQL 使用 B+ Tree，Redis 使用跳表？
-虚拟内存的作用？
-Swap 机制是什么？作用是什么？
-通过 Swap 交换的内存比一般磁盘 IO 更快吗？
-线程、进程、协程的区别？
-协程为什么是 2~4kb？
-Go 的 CSP 并发编程介绍一下？
-Go 中的内存逃逸现象是什么？
-tcp、udp的区别？如果让udp变得可靠可以怎么实现？
-5L容器和3L容器怎么倒出4L的水
-golang有哪些优势呢
-用过select case吗
-切片和数组的区别，切片cap是如何增长的
-interface的使用
-zset的使用场景
-redis持久化机制
-select poll epoll 区别
-context的使用
-gin的实现了解过吗
-gin的生命周期
-InnoDB与My-ISAM的区别
-你理解的索引
-你说你最常用的数据类型是string，那你了解过它底层怎么实现的么
-AOF和RDB的区别
-AOF重写是什么
-redis用的多吗？redis单线程为什么性能那么好？
-讲一下redis里的hash槽概念。
-redis集群的主从复制模式是什么样的。
-如何理解redis中的事务
-如何解决缓存雪崩和穿透问题
-redis内存淘汰策略有哪些？
-什么情况下会发生CPU调度？
-什么时候进程会切换？
-进程上下文包括哪些部分？
-什么时候会从用户态切换为内核态？
-进程间通信有哪些？
-项目中使用map有没有遇到一些坑？
-go语言怎么实现内存对齐的？ 不会
-Golang内存逃逸？什么情况下会发生内存逃逸？吟唱
-常用的加密算法有哪些？应用场景有哪些? 不熟
-读写锁的原理？
-100亿的数据找出前10大的数，内存有限
+## 62.为什么 MySQL 使用 B+ Tree，Redis 使用跳表？
+
+## 63.虚拟内存的作用？
+
+## 64.Swap 机制是什么？作用是什么？
+
+## 65.线程、进程、协程的区别？
+
+## 66.协程为什么是 2~4kb？
+
+## 67.Go 的 CSP 并发编程介绍一下？
+
+## 68.Go 中的内存逃逸现象是什么？
+
+## 69.tcp、udp的区别？如果让udp变得可靠可以怎么实现？
+
+## 70.5L容器和3L容器怎么倒出4L的水
+
+## 71.golang有哪些优势呢
+
+## 72.切片cap是如何增长的
+
+## 73.redis持久化机制
+
+## 74.select poll epoll 区别
+
+## 75.context的使用
+
+## 76.gin的实现了解过吗
+
+## 77.gin的生命周期
+
+## 78.InnoDB与My-ISAM的区别
+
+## 79.AOF和RDB的区别
+
+## 80.AOF重写是什么
+
+## 81.redis用的多吗？redis单线程为什么性能那么好？
+
+## 82.讲一下redis里的hash槽概念。
+
+## 83.redis集群的主从复制模式是什么样的。
+
+## 84.如何理解redis中的事务
+
+## 85.如何解决缓存雪崩和穿透问题
+
+## 86.redis内存淘汰策略有哪些？
+
+## 87.什么情况下会发生CPU调度？
+
+## 88.什么时候进程会切换？
+
+## 89.进程上下文包括哪些部分？
+
+## 90.什么时候会从用户态切换为内核态？
+
+## 91.进程间通信有哪些？
+
+## 92.项目中使用map有没有遇到一些坑？
+
+## 93.go 语言怎么实现内存对齐的？ 
+
+## 94.Golang内存逃逸？什么情况下会发生内存逃逸？
+
+## 95.常用的加密算法有哪些？应用场景有哪些? 
+
+## 96.读写锁的原理？
+
+## 97.100亿的数据找出前10大的数，内存有限
 
 

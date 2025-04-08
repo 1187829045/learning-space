@@ -369,25 +369,201 @@ ZSet 有两种不同的实现，分别是 ziplist 和 skiplist
 trx_id 值在 Read View 的 min_trx_id 和 max_trx_id 之间,需要判断 trx_id 是否在 m_ids 列表中,在,不可见,不在,可见
 
 ## 29.什么是协程？
-
+协程（Coroutine）是一种用户态的轻量级线程，通过 协作式调度 而非操作系统的抢占式调度来实现并发。其核心特点是 主动让出执行权 和 恢复上下文，适用于高并发、低延迟场景。
 
 ## 30.为什么有了线程之后还要有协程？
+线程和协程在并发编程中各有优劣，协程的诞生并非替代线程，而是为了解决线程在高并发场景下的性能瓶颈和开发复杂性。
 
+#### 线程的局限性
+1. 高资源消耗
+内存占用：每个线程需分配 1MB+ 的栈空间，1000 个线程即占用 1GB+ 内存,切换开销：线程切换涉及内核态与用户态转换，耗时约 1000ns
+2. 并发规模受限
+C10K 问题：万级线程会导致内存耗尽和调度延迟。竞争与锁开销：共享内存需频繁加锁，易引发死锁或性能下降。
+
+#### 协程的核心优势
+1. 极低资源消耗,轻量级栈：协程初始栈仅 2KB，单机可承载百万级并发。用户态调度：无需内核介入，切换仅保存寄存器状态（如 PC、SP），无上下文切换开销。
+2. 协作式调度,主动让出控制权：协程在 IO 阻塞时主动挂起，线程立即执行其他协程，提升 CPU 利用率。
 
 ## 31.进程间的通信
-
+1. 管道（Pipe）:匿名和有名
+2. 消息队列
+3. 共享内存
+4. 信号量
+5. 套接字
+6. 信号
 ## 32.共享内存的原理，怎么创建
 
-## 33.如何优雅地结束一个goroutine
+1. 共享内存的原理,多个进程将同一块物理内存映射到各自的虚拟地址空间，实现直接读写共享数据，无需内核中转，是速度最快的 IPC 方式。
+2. 实现步骤,创建共享内存：通过系统调用分配一块物理内存（或映射文件到内存）。映射到进程空间：将共享内存附加到进程的虚拟地址空间。同步访问：使用信号量、互斥锁等机制避免竞态条件。
+3. 优点与缺点,优点：零拷贝，性能极高（适合大数据频繁交互）。 缺点：需手动处理同步，编程复杂度高。
 
-## 34.B树和B+树
+```go
+// 1. 创建或打开共享内存标识符
+	const size = unsafe.Sizeof(SharedData{})
+	const key = 12345 // 共享内存唯一标识
+
+	// 使用 shmget 创建共享内存段
+	shmID, _, err := syscall.Syscall6(
+		syscall.SYS_SHMGET,
+		uintptr(key),
+		uintptr(size),
+		uintptr(0666|syscall.IPC_CREAT),
+		0, 0, 0,
+	)
+	if err != 0 {
+		panic("shmget failed: " + err.Error())
+	}
+
+	// 2. 映射共享内存到进程地址空间
+	sharedMem, _, err := syscall.Syscall6(
+		syscall.SYS_SHMAT,
+		shmID,
+		0,
+		0,
+		0, 0, 0,
+	)
+	if err != 0 {
+		panic("shmat failed: " + err.Error())
+	}
+	defer syscall.Syscall(syscall.SYS_SHMDT, sharedMem, 0, 0)
+
+	// 转换为数据结构指针
+	data := (*SharedData)(unsafe.Pointer(sharedMem))
+
+	// 3. 操作共享数据（需同步！）
+	data.Counter++
+	copy(data.Message[:], "Hello from Go")
+
+	fmt.Printf("Counter: %d, Message: %s\n", data.Counter, string(data.Message[:]))
+```
+## 33.如何优雅地结束一个goroutine
+1. Context 通知（官方推荐）
+```shell
+func worker(ctx context.Context) {
+    for {
+        select {
+        case <-ctx.Done():
+            fmt.Println("收到退出信号，清理资源...")
+            return
+        default:
+            // 执行任务（如处理消息队列）
+            processTask()
+        }
+    }
+}
+
+// 主程序调用
+ctx, cancel := context.WithCancel(context.Background())
+go worker(ctx)
+time.Sleep(5 * time.Second)
+cancel() // 触发退出
+```
+2. Channel 信号通知
+
+```shell
+func worker(quitChan <-chan struct{}) {
+    for {
+        select {
+        case <-quitChan:
+            fmt.Println("退出指令接收，释放文件句柄...")
+            return
+        default:
+            // 执行任务（如写入日志）
+            writeLog()
+        }
+    }
+}
+
+// 主程序调用
+quit := make(chan struct{})
+go worker(quit)
+close(quit) // 发送退出信号
+```
+3. Sync.WaitGroup 同步控制
+
+```shell
+func worker(wg *sync.WaitGroup, quitChan <-chan struct{}) {
+    defer wg.Done()
+    for {
+        select {
+        case <-quitChan:
+            return
+        default:
+            // 执行任务（如处理数据库连接）
+            handleDBQuery()
+        }
+    }
+}
+
+// 主程序调用
+var wg sync.WaitGroup
+quit := make(chan struct{})
+wg.Add(3)
+for i := 0; i < 3; i++ {
+    go worker(&wg, quit)
+}
+close(quit) // 通知所有 worker 退出
+wg.Wait()   // 阻塞至所有协程退出
+```
+
+
+
+## 34.B树和B+树分别介绍
+####  B树（B-Tree）
+1. 核心特点
+
+多路平衡：每个节点最多有m 个子节点（m 阶B树），且所有叶子节点在同一层。
+
+数据分布：所有节点（包括内部节点）均存储数据（键值对）。
+
+键值排列：节点中的键按升序排列，用于导航子树。
+#### B+树（B+ Tree）
+1. 核心特点
+
+数据分离：仅叶子节点存储数据，内部节点仅存键作为索引。
+
+叶子链表：所有叶子节点通过指针连接成链表，支持高效范围查询。
+
+键冗余：内部节点的键在叶子节点中重复出现（用于导航）。
 
 ## 35.浏览器输入 URL 的一个过程
+1. URL 解析与预处理
+2. DNS 域名解析
+3. 网络连接建立
+4. HTTP 请求与响应
+5. 浏览器渲染引擎工作流
 
 ## 36.Golang 的 GMP 调度
+#### GMP 的核心组件
+1. G（Goroutine）：轻量级协程，初始栈约 2KB，动态伸缩。
+2. M（Machine）：操作系统线程（OS Thread），负责执行代码，与内核线程一一对应。
+3. P（Processor）：逻辑处理器，管理一组本地 Goroutine 队列（和线程绑定），数量由 GOMAXPROCS 决定（默认 CPU 核数）。
 
+#### 调度器的工作流程
+1. P 的分配：每个 M 必须绑定一个 P 才能执行 G。如果 M 被阻塞（如系统调用），P 会解绑并寻找空闲 M，或创建新 M（避免线程浪费）。
+2. G 的执行：
+
+本地队列：P 优先从自己的本地队列取 G 执行（无锁，高效）。
+
+全局队列：本地队列为空时，从全局队列偷一批 G（分摊锁竞争）。
+
+窃取机制（Work Stealing）：本地和全局队列都空时，从其他 P 的本地队列偷 G。
+
+3. 阻塞处理：
+
+若 G 发起系统调用（如文件 I/O），M 会阻塞，此时 P 会解绑并转去服务其他 M。
+
+系统调用结束后，M 尝试获取 P，若失败则将 G 放回全局队列，自身休眠。
 
 ## 37.M 系统调用结束以后会怎么样
+
+1. M 从内核态返回用户态:系统调用完成后，M 重新回到用户态，此时需要重新与调度器协作。
+
+2. 尝试绑定空闲的 P: M 会优先尝试重新绑定 原来的 P（如果该 P 仍空闲）。若原 P 已被其他 M 占用，则尝试从全局 空闲 P 列表 中获取一个新的 P。
+
+3. 成功绑定 P 的情况:绑定成功后，M 将继续执行 原本因系统调用阻塞的 G（Goroutine）。G 的状态从 Gsyscall 恢复为 Grunnable，加入 P 的本地队列等待调度。
+
+4. 无法绑定 P 的情况:若所有 P 均被占用，G 会被放回 全局队列（而非本地队列，避免饥饿其他 P）。M 进入休眠状态，加入 空闲 M 列表，等待后续被唤醒（例如新 P 创建或现有 P 释放时）。
 
 ## 38.说一下 Gin 的拦截器的原理
 
